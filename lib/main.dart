@@ -9,6 +9,8 @@ import 'results.dart';
 import 'scanner.dart';
 
 const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: 'dev');
+const appAbi = String.fromEnvironment('APP_ABI', defaultValue: '');
+const appVersionText = appAbi == '' ? 'v$appVersion' : 'v$appVersion · $appAbi';
 const _seed = Color(0xFF00897B);
 
 void main() => runApp(const DiskCompareApp());
@@ -173,7 +175,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             onPressed: () => showAboutDialog(
               context: context,
               applicationName: 'DiskCompare',
-              applicationVersion: 'v$appVersion',
+              applicationVersion: appVersionText,
               children: const [
                 Text('Analizá qué ocupa lugar en tu celular: árbol de carpetas por tamaño, '
                     'mapa de bloques, archivos más grandes y totales por tipo.\n\n'
@@ -200,7 +202,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             ),
             Padding(
               padding: const EdgeInsets.all(8),
-              child: Text('v$appVersion',
+              child: Text(appVersionText,
                   textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodySmall),
             ),
           ],
