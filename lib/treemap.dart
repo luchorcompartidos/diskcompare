@@ -8,26 +8,32 @@ import 'scanner.dart';
 class TmItem {
   final Node node;
   final double value;
+  final int? restStart; // bloque gris: desde qué posición siguen los elementos chicos
   Rect rect = Rect.zero;
-  TmItem(this.node, this.value);
+  TmItem(this.node, this.value, {this.restStart});
 }
 
 /// Mapa de bloques "squarified": cada bloque ocupa un área proporcional a su tamaño.
-List<TmItem> layoutTreemap(Node parent, Rect area, {int maxItems = 150}) {
-  final kids = parent.children.where((n) => n.size > 0).toList();
+/// [start]: saltea los primeros elementos (para el mapa de "elementos chicos").
+List<TmItem> layoutTreemap(Node parent, Rect area, {int maxItems = 150, int start = 0}) {
+  // children ya viene ordenado de mayor a menor
+  final kids = parent.children.skip(start).where((n) => n.size > 0).toList();
   if (kids.isEmpty || area.width <= 0 || area.height <= 0) return [];
   var shown = kids;
+  Node? other;
   if (kids.length > maxItems) {
     final rest = kids.sublist(maxItems - 1);
-    final other = Node('${rest.length} elementos más', false,
+    other = Node('${rest.length} elementos más', false,
         size: rest.fold<int>(0, (s, n) => s + n.size), synthetic: true)
       ..parent = parent;
     shown = [...kids.sublist(0, maxItems - 1), other];
   }
   final total = shown.fold<int>(0, (s, n) => s + n.size).toDouble();
   final scale = area.width * area.height / total;
-  final items = [for (final n in shown) TmItem(n, n.size * scale)]
-    ..sort((a, b) => b.value.compareTo(a.value));
+  final restStart = start + maxItems - 1;
+  final items = [
+    for (final n in shown) TmItem(n, n.size * scale, restStart: identical(n, other) ? restStart : null)
+  ]..sort((a, b) => b.value.compareTo(a.value));
   _squarify(items, area);
   return items;
 }
@@ -95,41 +101,42 @@ Color treemapColor(Node n, int i) {
 
 class TreemapPainter extends CustomPainter {
   final List<TmItem> items;
-  TreemapPainter(this.items);
+  final double zoom; // escala actual del zoom: el texto se mantiene legible
+  TreemapPainter(this.items, [this.zoom = 1]);
 
   @override
   void paint(Canvas canvas, Size size) {
     for (var i = 0; i < items.length; i++) {
       final it = items[i];
-      final r = it.rect.deflate(1);
+      final r = it.rect.deflate(1 / zoom);
       if (r.width <= 0 || r.height <= 0) continue;
-      canvas.drawRRect(RRect.fromRectAndRadius(r, const Radius.circular(3)),
+      canvas.drawRRect(RRect.fromRectAndRadius(r, Radius.circular(3 / zoom)),
           Paint()..color = treemapColor(it.node, i));
-      if (r.width > 46 && r.height > 26) {
+      if (r.width * zoom > 46 && r.height * zoom > 26) {
         final tp = TextPainter(
           text: TextSpan(
-            style: const TextStyle(color: Colors.white, fontSize: 11),
+            style: TextStyle(color: Colors.white, fontSize: 11 / zoom),
             children: [
               TextSpan(
-                  text: '${it.node.isDir ? '📁 ' : ''}${it.node.name}\n',
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                  text: '${it.node.synthetic ? '' : it.node.isDir ? '📁 ' : ''}${it.node.name}\n',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12 / zoom)),
               TextSpan(text: fmtSize(it.node.size)),
             ],
           ),
           textDirection: TextDirection.ltr,
           maxLines: 2,
           ellipsis: '…',
-        )..layout(maxWidth: r.width - 8);
+        )..layout(maxWidth: r.width - 8 / zoom);
         canvas.save();
         canvas.clipRect(r);
-        tp.paint(canvas, r.topLeft + const Offset(4, 3));
+        tp.paint(canvas, r.topLeft + Offset(4 / zoom, 3 / zoom));
         canvas.restore();
       }
     }
   }
 
   @override
-  bool shouldRepaint(covariant TreemapPainter old) => old.items != items;
+  bool shouldRepaint(covariant TreemapPainter old) => old.items != items || old.zoom != zoom;
 }
 
 TmItem? hitTreemap(List<TmItem> items, Offset p) {

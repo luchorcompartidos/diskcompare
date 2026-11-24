@@ -186,7 +186,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       body: RefreshIndicator(
         onRefresh: _refresh,
         child: ListView(
-          padding: const EdgeInsets.all(12),
+          padding: EdgeInsets.fromLTRB(12, 12, 12, 12 + MediaQuery.paddingOf(context).bottom),
           children: [
             if (_granted == false) _permissionCard(),
             for (final v in _vols) _volumeCard(v),

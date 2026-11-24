@@ -3,9 +3,9 @@
 App Android (Flutter) para ver qué ocupa lugar en el celular, al estilo **Disk Usage** + **TreeSize**,
 y —en la próxima etapa— compararlo contra una carpeta compartida de una PC con Windows por WiFi.
 
-## Qué hace (v0.0.1)
+## Qué hace (v0.0.2)
 - **Árbol**: carpetas y archivos ordenados por tamaño, con barra y % del total. Tocá una carpeta para entrar.
-- **Mapa**: bloques proporcionales al tamaño (squarified treemap). Tocá un bloque para entrar.
+- **Mapa**: bloques proporcionales al tamaño (squarified treemap). Tocá un bloque para entrar, mantené presionado para ver el detalle, pellizcá para hacer zoom y arrastrá. El bloque gris abre un mapa con los elementos chicos.
 - **Grandes**: los 300 archivos más grandes, con filtro por tipo.
 - **Tipos**: totales de imágenes, videos, audio, documentos, APK, comprimidos y otros.
 - Almacenamiento interno y tarjeta SD, con espacio usado y libre.

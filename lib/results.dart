@@ -52,6 +52,8 @@ class _ResultsPageState extends State<ResultsPage> with SingleTickerProviderStat
       if (mounted) setState(() {});
     });
   late Node _cur = widget.root;
+  final _tc = TransformationController(); // zoom del mapa
+  final List<int> _rest = []; // mapa: "elementos chicos" abiertos (desde qué posición)
   Kind? _kind;
   _Stats? _statsCache;
   _Stats get _stats => _statsCache ??= _Stats.of(widget.root);
@@ -61,16 +63,30 @@ class _ResultsPageState extends State<ResultsPage> with SingleTickerProviderStat
   @override
   void dispose() {
     _tabs.dispose();
+    _tc.dispose();
     super.dispose();
   }
 
   bool get _inTree => _tabs.index <= 1;
 
-  void _go(Node n) => setState(() => _cur = n);
+  void _go(Node n) {
+    _tc.value = Matrix4.identity();
+    setState(() {
+      _cur = n;
+      _rest.clear();
+    });
+  }
+
+  bool get _inRest => _tabs.index == 1 && _rest.isNotEmpty;
 
   void _up() {
+    if (_inRest) {
+      _tc.value = Matrix4.identity();
+      setState(() => _rest.removeLast());
+      return;
+    }
     final p = _cur.parent;
-    if (p != null) setState(() => _cur = p);
+    if (p != null) _go(p);
   }
 
   void _showInTree(Node file) {
@@ -82,7 +98,7 @@ class _ResultsPageState extends State<ResultsPage> with SingleTickerProviderStat
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: !_inTree || _cur.isRoot,
+      canPop: !_inTree || (_cur.isRoot && !_inRest),
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _up();
       },
@@ -99,10 +115,14 @@ class _ResultsPageState extends State<ResultsPage> with SingleTickerProviderStat
             ],
           ),
         ),
-        body: TabBarView(
-          controller: _tabs,
-          physics: const NeverScrollableScrollPhysics(),
-          children: [_treeTab(), _mapTab(), _bigTab(), _typesTab()],
+        // SafeArea: que la barra de navegación de Android no tape la parte de abajo
+        body: SafeArea(
+          top: false,
+          child: TabBarView(
+            controller: _tabs,
+            physics: const NeverScrollableScrollPhysics(),
+            children: [_treeTab(), _mapTab(), _bigTab(), _typesTab()],
+          ),
         ),
       ),
     );
@@ -247,38 +267,58 @@ class _ResultsPageState extends State<ResultsPage> with SingleTickerProviderStat
   }
 
   void _details(Node n) {
-    final kind = kindOf(n.name);
+    final kind = n.isDir ? null : kindOf(n.name);
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              Icon(kind.icon, color: kind.color),
-              const SizedBox(width: 8),
-              Expanded(child: Text(n.name, style: Theme.of(ctx).textTheme.titleMedium)),
-            ]),
-            const SizedBox(height: 12),
-            Text('Tamaño: ${fmtSize(n.size)} (${fmtInt(n.size)} bytes)'),
-            Text('Tipo: ${kind.label}'),
-            if (n.mtime > 0) Text('Modificado: ${fmtDate(n.mtime)}'),
-            const SizedBox(height: 8),
-            SelectableText('Carpeta: ${n.parent?.path ?? ''}',
-                style: Theme.of(ctx).textTheme.bodySmall),
-            const SizedBox(height: 12),
-            FilledButton.tonalIcon(
-              onPressed: () {
-                Navigator.pop(ctx);
-                _showInTree(n);
-              },
-              icon: const Icon(Icons.account_tree_outlined),
-              label: const Text('Ver su carpeta en el Árbol'),
-            ),
-          ],
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Icon(n.isDir ? Icons.folder : kind!.icon,
+                    color: n.isDir ? Colors.amber.shade700 : kind!.color),
+                const SizedBox(width: 8),
+                Expanded(child: Text(n.name, style: Theme.of(ctx).textTheme.titleMedium)),
+              ]),
+              const SizedBox(height: 12),
+              Text('Tamaño: ${fmtSize(n.size)} (${fmtInt(n.size)} bytes)'),
+              if (n.isDir) Text('Contiene: ${fmtInt(n.files)} archivos') else Text('Tipo: ${kind!.label}'),
+              if (n.mtime > 0) Text('${n.isDir ? 'Último cambio adentro' : 'Modificado'}: ${fmtDate(n.mtime)}'),
+              if (n.restricted) const Text('Android limita lo que se puede ver en esta carpeta.'),
+              const SizedBox(height: 8),
+              SelectableText('${n.isDir ? 'Ruta' : 'Carpeta'}: ${n.isDir ? n.path : n.parent?.path ?? ''}',
+                  style: Theme.of(ctx).textTheme.bodySmall),
+              const SizedBox(height: 12),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                if (n.isDir)
+                  FilledButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _go(n);
+                    },
+                    icon: const Icon(Icons.login),
+                    label: const Text('Entrar'),
+                  ),
+                FilledButton.tonalIcon(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    if (n.isDir) {
+                      _go(n);
+                      _tabs.animateTo(0);
+                    } else {
+                      _showInTree(n);
+                    }
+                  },
+                  icon: const Icon(Icons.account_tree_outlined),
+                  label: Text(n.isDir ? 'Ver en el Árbol' : 'Ver su carpeta en el Árbol'),
+                ),
+              ]),
+            ],
+          ),
         ),
       ),
     );
@@ -287,34 +327,68 @@ class _ResultsPageState extends State<ResultsPage> with SingleTickerProviderStat
   // ---------- Mapa (estilo Disk Usage) ----------
 
   Widget _mapTab() {
+    final start = _rest.isEmpty ? 0 : _rest.last;
+    final small = Theme.of(context).textTheme.bodySmall;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _crumbs(),
-        _summary(),
+        if (start == 0)
+          _summary()
+        else
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text(
+              'Elementos chicos de "${_cur.isRoot ? widget.label : _cur.name}": '
+              '${fmtInt(_cur.children.length - start)} elementos · '
+              '${fmtSize(_cur.children.skip(start).fold<int>(0, (a, n) => a + n.size))}',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+          ),
         Expanded(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
             child: LayoutBuilder(builder: (_, c) {
-              final items = layoutTreemap(_cur, Offset.zero & c.biggest);
+              final items = layoutTreemap(_cur, Offset.zero & c.biggest, start: start);
               if (items.isEmpty) {
                 return Center(child: Text(_cur.restricted ? 'Sin acceso al contenido' : 'Carpeta vacía'));
               }
-              return GestureDetector(
-                onTapUp: (d) {
-                  final it = hitTreemap(items, d.localPosition);
-                  if (it == null) return;
-                  final n = it.node;
-                  if (n.synthetic) {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text('Son elementos chicos: miralos en la pestaña Árbol.')));
-                  } else if (n.isDir) {
-                    _go(n);
-                  } else {
-                    _details(n);
-                  }
-                },
-                child: CustomPaint(size: c.biggest, painter: TreemapPainter(items)),
+              return ClipRect(
+                child: Stack(children: [
+                  InteractiveViewer(
+                    transformationController: _tc,
+                    minScale: 1,
+                    maxScale: 40,
+                    child: GestureDetector(
+                      onTapUp: (d) => _tapBlock(hitTreemap(items, d.localPosition)),
+                      onLongPressStart: (d) {
+                        final it = hitTreemap(items, d.localPosition);
+                        if (it != null && !it.node.synthetic) _details(it.node);
+                      },
+                      child: ListenableBuilder(
+                        listenable: _tc,
+                        builder: (_, __) => CustomPaint(
+                          size: c.biggest,
+                          painter: TreemapPainter(items, _tc.value.getMaxScaleOnAxis()),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    right: 6,
+                    top: 6,
+                    child: ListenableBuilder(
+                      listenable: _tc,
+                      builder: (_, __) => _tc.value.getMaxScaleOnAxis() > 1.01
+                          ? IconButton.filledTonal(
+                              tooltip: 'Ver todo',
+                              icon: const Icon(Icons.zoom_out_map),
+                              onPressed: () => _tc.value = Matrix4.identity(),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                  ),
+                ]),
               );
             }),
           ),
@@ -322,12 +396,27 @@ class _ResultsPageState extends State<ResultsPage> with SingleTickerProviderStat
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
           child: Text(
-            _cur.isRoot ? 'Tocá un bloque para entrar.' : 'Tocá un bloque para entrar · Atrás para subir.',
-            style: Theme.of(context).textTheme.bodySmall,
+            'Tocá para entrar · Mantené presionado para ver el detalle · '
+            'Pellizcá para hacer zoom${(_cur.isRoot && start == 0) ? '' : ' · Atrás para volver'}',
+            style: small,
           ),
         ),
       ],
     );
+  }
+
+  void _tapBlock(TmItem? it) {
+    if (it == null) return;
+    final n = it.node;
+    if (it.restStart != null) {
+      // Bloque gris: abre un mapa solo con los elementos chicos
+      _tc.value = Matrix4.identity();
+      setState(() => _rest.add(it.restStart!));
+    } else if (n.isDir) {
+      _go(n);
+    } else {
+      _details(n);
+    }
   }
 
   // ---------- Archivos más grandes ----------
