@@ -55,6 +55,7 @@
 - Archivos principales: `lib/main.dart` (inicio, permisos, volúmenes), `lib/scanner.dart` (escaneo en isolate), `lib/results.dart` (pestañas), `lib/treemap.dart` (mapa), `lib/format.dart` (tamaños y tipos).
 - Nativo: `tool/patch_platforms.py` escribe `MainActivity.kt` (canal `dc/storage`: `sdk`, `volumes`) y agrega los permisos al manifest. La carpeta `android/` no se versiona: la genera `flutter create` en Actions.
 - Cómo se publica: push a main → GitHub Actions (`ci.yml`, matriz `normal` / `android5-6`) compila los 2 APK, firmados con los Secrets ANDROID_KEYSTORE_BASE64 / _PASSWORD / ANDROID_KEY_ALIAS → Release con los 2 .apk y una tabla "¿Qué archivo bajar?".
+- Guía general para otras apps: `plantilla/APK-DISPOSITIVOS-VIEJOS.md` del repo home (sale de este caso).
 - `--dart-define=APP_ABI` muestra la arquitectura en la app; el código tiene que seguir compilando con Flutter 3.32 (no usar APIs más nuevas sin revisar el APK android5-6).
 - Releases: según `ESTANDAR-VERSIONES.md` del repo home (`[major]` / `[minor]` / `[patch]` / `[skip release]` en el commit; cambios que no tocan la app van sin release)
 
