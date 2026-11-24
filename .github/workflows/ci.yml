@@ -1,0 +1,157 @@
+# Compila el APK (Android) en cada push a main.
+# Versión (SemVer): poné [patch], [minor] o [major] en el mensaje del commit para crear una Release.
+# Sin marca: queda un APK de prueba en Artifacts, pero NO se crea Release.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Tipo de Release"
+        type: choice
+        options: [ninguna, patch, minor, major]
+        default: ninguna
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: ci-main
+  cancel-in-progress: false
+
+env:
+  FLUTTER_CREATE: flutter create --project-name diskcompare --org com.luchorcompartidos
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      number: ${{ steps.v.outputs.number }}
+      code: ${{ steps.v.outputs.code }}
+      release: ${{ steps.v.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: v
+        name: Calcular versión desde los tags
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+          BUMP_IN: ${{ github.event.inputs.bump }}
+          LINK: ${{ github.server_url }}/${{ github.repository }}/actions/workflows/ci.yml
+        run: |
+          last=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          [ -z "$last" ] && last="v0.0.0"
+          IFS=. read -r MA MI PA <<< "${last#v}"
+          bump=""
+          case "$MSG" in
+            *"[skip release]"*) bump="" ;;
+            *"[major]"*) bump=major ;;
+            *"[minor]"*) bump=minor ;;
+            *"[patch]"*) bump=patch ;;
+          esac
+          if [ -n "$BUMP_IN" ] && [ "$BUMP_IN" != "ninguna" ]; then bump="$BUMP_IN"; fi
+          case "$bump" in
+            major) MA=$((MA+1)); MI=0; PA=0 ;;
+            minor) MI=$((MI+1)); PA=0 ;;
+            patch) PA=$((PA+1)) ;;
+          esac
+          CODE=$((MA*10000 + MI*100 + PA)); [ "$CODE" -lt 1 ] && CODE=1
+          echo "number=$MA.$MI.$PA" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          if [ -n "$bump" ]; then
+            echo "version=$MA.$MI.$PA" >> "$GITHUB_OUTPUT"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "Release nueva: v$MA.$MI.$PA ($bump)"
+          else
+            echo "version=$MA.$MI.$PA-prueba" >> "$GITHUB_OUTPUT"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Sin Release::El commit no tiene [patch], [minor] ni [major]. Queda un APK de prueba en Artifacts, pero no se crea Release. Para crearla, usá 'Run workflow' y elegí el tipo."
+            {
+              echo "## ⚠️ Push sin Release"
+              echo
+              echo "No se creó tag ni Release. El APK de prueba queda en *Artifacts*."
+              echo
+              echo "**¿Preferís crear una versión de este cambio?** Entrá a [CI]($LINK), tocá **Run workflow** y elegí el tipo (patch, minor o major)."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  android:
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      DC_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      DC_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: $FLUTTER_CREATE --platforms=android .
+      - name: Permisos de archivos, nombre y canal nativo
+        run: |
+          python3 tool/patch_platforms.py android
+          cat android/app/src/main/AndroidManifest.xml
+      - name: Firma fija del APK
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::warning title=Sin firma fija::Faltan los Secrets ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD y ANDROID_KEY_ALIAS; se firma con una clave de prueba (para actualizar hay que desinstalar)."
+            exit 0
+          fi
+          printf "%s" "$KEYSTORE_B64" | tr -d " \r\n" | base64 -d > "$RUNNER_TEMP/dc-release.jks"
+          echo "DC_KEYSTORE_PATH=$RUNNER_TEMP/dc-release.jks" >> "$GITHUB_ENV"
+          python3 tool/patch_platforms.py signing
+      - name: Revisar el código
+        run: |
+          flutter pub get
+          flutter analyze --no-fatal-infos --no-fatal-warnings lib
+      - name: Compilar APK
+        run: |
+          flutter build apk --release \
+            --build-name=${{ needs.version.outputs.number }} \
+            --build-number=${{ needs.version.outputs.code }} \
+            --dart-define=APP_VERSION=$VERSION
+          mkdir -p out
+          cp build/app/outputs/flutter-apk/app-release.apk "out/diskcompare-v${VERSION}.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: out/*.apk
+
+  release:
+    needs: [version, android]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Notas de la versión (commits desde la Release anterior)
+        run: |
+          prev=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          git log ${prev:+$prev..HEAD} --no-merges --pretty='- %s' \
+            | grep -v '\[skip ci\]' | sed -E 's/ *\[(patch|minor|major)\]//' > notas.md || true
+          [ -s notas.md ] || echo "- Compilación nueva" > notas.md
+          cat notas.md
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          name: android
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.version.outputs.version }}
+          name: v${{ needs.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          body_path: notas.md
+          files: out/*

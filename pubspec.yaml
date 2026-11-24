@@ -1,0 +1,15 @@
+name: diskcompare
+description: "DiskCompare — analizador del almacenamiento de Android (estilo Disk Usage + TreeSize)"
+publish_to: 'none'
+version: 0.0.1+1
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  permission_handler: ^12.0.0
+
+flutter:
+  uses-material-design: true
