@@ -3,56 +3,40 @@
 Uso: python3 tool/patch_platforms.py android|signing
 """
 import glob
+import os
 import re
+import shutil
 import sys
 
-MAIN_ACTIVITY = """package com.luchorcompartidos.diskcompare
+HERE = os.path.dirname(os.path.abspath(__file__))
+KOTLIN = ["MainActivity.kt", "SmbBridge.kt", "Secret.kt"]  # tool/android/*.kt
 
-import android.os.Build
-import android.os.Environment
-import android.os.StatFs
-import io.flutter.embedding.android.FlutterActivity
-import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.plugin.common.MethodChannel
-import java.io.File
+# smbj (SMB 2/3, para leer carpetas compartidas de Windows) + desugaring de Java 8
+# (smbj usa APIs de Java 8 que Android 5/6 no trae).
+SMB_GRADLE = """
 
-class MainActivity : FlutterActivity() {
-    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-        super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "dc/storage")
-            .setMethodCallHandler { call, result ->
-                when (call.method) {
-                    "sdk" -> result.success(Build.VERSION.SDK_INT)
-                    "volumes" -> result.success(volumes())
-                    else -> result.notImplemented()
-                }
-            }
+// DiskCompare: SMB con smbj
+android {
+    compileOptions {
+        isCoreLibraryDesugaringEnabled = true
     }
-
-    /** Almacenamiento interno y tarjetas SD, con su espacio total y libre. */
-    private fun volumes(): List<Map<String, Any>> {
-        val out = mutableListOf<Map<String, Any>>()
-        for (d in getExternalFilesDirs(null)) {
-            if (d == null) continue
-            val p = d.absolutePath
-            val i = p.indexOf("/Android/")
-            if (i <= 0) continue
-            val root = File(p.substring(0, i))
-            try {
-                val st = StatFs(root.path)
-                val removable = try { Environment.isExternalStorageRemovable(d) } catch (e: Exception) { false }
-                out.add(mapOf(
-                    "path" to root.path,
-                    "label" to (if (removable) "Tarjeta SD" else "Almacenamiento interno"),
-                    "total" to st.totalBytes,
-                    "free" to st.availableBytes,
-                    "removable" to removable,
-                ))
-            } catch (e: Exception) {
-            }
+    packaging {
+        resources {
+            excludes += setOf(
+                "META-INF/DEPENDENCIES",
+                "META-INF/INDEX.LIST",
+                "META-INF/versions/9/OSGI-INF/MANIFEST.MF",
+            )
         }
-        return out
     }
+    buildTypes {
+        getByName("release") { proguardFiles("proguard-rules.pro") }
+    }
+}
+
+dependencies {
+    implementation("com.hierynomus:smbj:0.13.0")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 }
 """
 
@@ -92,6 +76,11 @@ def android():
     s = open(m, encoding="utf-8").read()
     s = re.sub(r'android:label="[^"]*"', 'android:label="DiskCompare"', s, count=1)
     open(m, "w", encoding="utf-8").write(s)
+    if "android.permission.INTERNET" not in s:
+        patch(m, "<application",
+              '<uses-permission android:name="android.permission.INTERNET" />\n'
+              '    <application')
+    s = open(m, encoding="utf-8").read()
     if "MANAGE_EXTERNAL_STORAGE" not in s:
         patch(m, "<application",
               '<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />\n'
@@ -101,13 +90,19 @@ def android():
     s = open(m, encoding="utf-8").read()
     if "requestLegacyExternalStorage" not in s:
         patch(m, "<application", '<application android:requestLegacyExternalStorage="true"')
-    found = False
-    for ma in glob.glob("android/app/src/main/kotlin/**/MainActivity.kt", recursive=True):
-        open(ma, "w", encoding="utf-8").write(MAIN_ACTIVITY)
-        print(f"OK {ma}")
-        found = True
+    found = glob.glob("android/app/src/main/kotlin/**/MainActivity.kt", recursive=True)
     if not found:
         sys.exit("::error::No encontré MainActivity.kt")
+    dest = os.path.dirname(found[0])
+    for k in KOTLIN:
+        shutil.copy(os.path.join(HERE, "android", k), os.path.join(dest, k))
+        print(f"OK {dest}/{k}")
+    shutil.copy(os.path.join(HERE, "android", "proguard-rules.pro"), "android/app/proguard-rules.pro")
+    g = "android/app/build.gradle.kts"
+    gs = open(g, encoding="utf-8").read()
+    if "com.hierynomus:smbj" not in gs:
+        open(g, "a", encoding="utf-8").write(SMB_GRADLE)
+        print(f"OK {g} (smbj)")
 
 
 def signing():

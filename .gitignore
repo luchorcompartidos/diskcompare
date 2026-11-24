@@ -17,3 +17,6 @@ pubspec.lock
 /windows/
 /web/
 /test/
+
+# Python
+__pycache__/

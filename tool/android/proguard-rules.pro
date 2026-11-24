@@ -1,0 +1,12 @@
+# smbj (SMB 2/3) y sus dependencias: se usan por reflexión (mbassador, BouncyCastle).
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
+-keep class com.hierynomus.** { *; }
+-keep class net.engio.** { *; }
+-keep class org.bouncycastle.** { *; }
+-dontwarn com.hierynomus.**
+-dontwarn net.engio.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.slf4j.**
+-dontwarn javax.**
+-dontwarn org.ietf.jgss.**
+-dontwarn java.lang.invoke.**

@@ -92,7 +92,7 @@ class Scanner {
       if (m is List && m.isNotEmpty && m[0] == 'p') {
         onProgress(m[1] as int, m[2] as int, m[3] as String);
       } else if (m is Node) {
-        _link(m);
+        linkTree(m);
         _finish(m);
       } else if (m is List) {
         // Error del isolate: [mensaje, pila]
@@ -123,15 +123,16 @@ class Scanner {
     final d = _done;
     if (d != null && !d.isCompleted) d.completeError(Exception(msg));
   }
+}
 
-  static void _link(Node root) {
-    final stack = <Node>[root];
-    while (stack.isNotEmpty) {
-      final n = stack.removeLast();
-      for (final c in n.children) {
-        c.parent = n;
-        if (c.isDir) stack.add(c);
-      }
+/// Completa los enlaces "parent" de un árbol que llegó de otro isolate o de un archivo.
+void linkTree(Node root) {
+  final stack = <Node>[root];
+  while (stack.isNotEmpty) {
+    final n = stack.removeLast();
+    for (final c in n.children) {
+      c.parent = n;
+      if (c.isDir) stack.add(c);
     }
   }
 }

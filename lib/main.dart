@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'compare.dart';
 import 'format.dart';
 import 'results.dart';
 import 'scanner.dart';
+import 'store.dart';
 
 const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: 'dev');
 const appAbi = String.fromEnvironment('APP_ABI', defaultValue: '');
@@ -68,7 +70,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   String? _scanning; // ruta del volumen que se está escaneando
   int _files = 0, _bytes = 0;
   String _current = '';
-  final Map<String, Node> _last = {}; // último escaneo de cada volumen (en esta sesión)
+  final Map<String, Node> _last = {}; // último escaneo de cada volumen (queda guardado)
+  final Map<String, int> _lastAt = {}; // cuándo se hizo
+  bool _savedLoaded = false;
 
   @override
   void initState() {
@@ -108,7 +112,30 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         _vols = vols;
         _granted = g;
       });
+      _loadSaved();
     }
+  }
+
+  /// Trae los escaneos guardados (una sola vez, al abrir la app).
+  Future<void> _loadSaved() async {
+    if (_savedLoaded) return;
+    _savedLoaded = true;
+    for (final v in _vols) {
+      final s = await loadScan(v.path);
+      if (s != null && mounted && !_last.containsKey(v.path)) {
+        setState(() {
+          _last[v.path] = s.root;
+          _lastAt[v.path] = s.at;
+        });
+      }
+    }
+  }
+
+  Future<void> _save(Volume v, Node root) async {
+    try {
+      final at = await saveScan(v.path, root);
+      if (mounted) setState(() => _lastAt[v.path] = at);
+    } catch (_) {}
   }
 
   Future<bool> _hasPermission(int sdk) async {
@@ -145,6 +172,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       });
       if (root != null && mounted) {
         _last[v.path] = root;
+        _lastAt[v.path] = DateTime.now().millisecondsSinceEpoch;
+        _save(v, root);
         setState(() => _scanning = null);
         _open(v, root);
       }
@@ -179,7 +208,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               children: const [
                 Text('Analizá qué ocupa lugar en tu celular: árbol de carpetas por tamaño, '
                     'mapa de bloques, archivos más grandes y totales por tipo.\n\n'
-                    'Próxima etapa: comparar con una carpeta compartida de tu PC por WiFi.'),
+                    'Comparar con la PC: celular contra una carpeta compartida de Windows por WiFi '
+                    '(solo en el celular / solo en la PC / en ambos / diferencias). Solo lee: no borra nada.'),
               ],
             ),
           ),
@@ -194,10 +224,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             for (final v in _vols) _volumeCard(v),
             Card(
               child: ListTile(
-                enabled: false,
+                enabled: _scanning == null,
                 leading: const Icon(Icons.compare_arrows),
                 title: const Text('Comparar con la PC (WiFi)'),
-                subtitle: const Text('Próximamente: celular contra una carpeta compartida de Windows.'),
+                subtitle: const Text('Una carpeta del celular contra una carpeta compartida de Windows.'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => ComparePage(
+                    volumes: [for (final v in _vols) (v.path, v.label)],
+                    granted: _granted == true,
+                  ),
+                )),
               ),
             ),
             Padding(
@@ -270,6 +307,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               const SizedBox(height: 4),
               Text('${fmtSize(v.used)} usados de ${fmtSize(v.total)} · ${fmtSize(v.free)} libres',
                   style: small),
+            ],
+            if (last != null && _lastAt[v.path] != null) ...[
+              const SizedBox(height: 4),
+              Text('Último análisis: ${fmtDate(_lastAt[v.path]!)} · ${fmtSize(last.size)}', style: small),
             ],
             const SizedBox(height: 12),
             if (scanningThis) ...[
