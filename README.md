@@ -3,7 +3,7 @@
 App Android (Flutter) para ver qué ocupa lugar en el celular, al estilo **Disk Usage** + **TreeSize**,
 y compararlo contra una carpeta compartida de una PC con Windows por WiFi.
 
-## Qué hace (v0.0.5)
+## Qué hace (v0.0.6)
 - **Árbol**: carpetas y archivos ordenados por tamaño, con barra y % del total. Tocá una carpeta para entrar.
 - **Mapa**: bloques proporcionales al tamaño (squarified treemap). Tocá un bloque para entrar, mantené presionado para ver el detalle, pellizcá para hacer zoom y arrastrá. El bloque gris abre un mapa con los elementos chicos.
 - **Grandes**: los 300 archivos más grandes, con filtro por tipo.
@@ -11,6 +11,8 @@ y compararlo contra una carpeta compartida de una PC con Windows por WiFi.
 - Almacenamiento interno y tarjeta SD, con espacio usado y libre. El último análisis queda guardado.
 - **Comparar con la PC**: una carpeta del celular contra una carpeta compartida de Windows (`\\PC\Carpeta`, SMB 2/3).
   Compara por nombre + tamaño, sin importar la subcarpeta: *Solo celular*, *Solo PC*, *En ambos* y *Diferencias*.
+  Opción de comparar también por carpeta (nombre + tamaño + subcarpeta). Buscador y filtro por tipo en las 4 pestañas.
+  Exportar a CSV (pestaña actual o las 4): guardar en `Descargas/DiskCompare` o compartir con el menú de Android.
   La contraseña de Windows se puede guardar cifrada en el equipo. También permite ver la carpeta de la PC con Árbol y Mapa.
 - Aviso de versión nueva (botón **Descargar** con el APK de tu arquitectura) y Changelog desde las Releases.
 - Solo lee: no modifica ni borra nada.

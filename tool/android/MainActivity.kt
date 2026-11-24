@@ -23,6 +23,18 @@ class MainActivity : FlutterActivity() {
                 "sdk" -> result.success(Build.VERSION.SDK_INT)
                 "volumes" -> result.success(volumes())
                 "filesDir" -> result.success(filesDir.absolutePath)
+                "cacheDir" -> result.success(cacheDir.absolutePath)
+                "saveDownload" -> try {
+                    result.success(Export.saveToDownloads(this, call.argument<String>("path") ?: "", call.argument<String>("name") ?: "diskcompare.csv"))
+                } catch (e: Exception) {
+                    result.error("export", e.message ?: e.toString(), null)
+                }
+                "shareFile" -> try {
+                    Export.share(this, call.argument<String>("path") ?: "", call.argument<String>("title") ?: "DiskCompare")
+                    result.success(true)
+                } catch (e: Exception) {
+                    result.error("export", e.message ?: e.toString(), null)
+                }
                 "openUrl" -> try {
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(call.argument<String>("url") ?: ""))
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

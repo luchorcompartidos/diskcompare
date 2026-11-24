@@ -18,6 +18,37 @@ Future<Directory> appDir() async {
   return d;
 }
 
+/// Exportar archivos (CSV): se escriben en la caché de la app y desde ahí
+/// se copian a Descargas/DiskCompare o se comparten con el menú de Android.
+class Exporter {
+  static Future<Directory> dir() async {
+    String? p;
+    try {
+      p = await _storage.invokeMethod<String>('cacheDir');
+    } catch (_) {}
+    final d = Directory('${p ?? Directory.systemTemp.path}/export');
+    if (!d.existsSync()) d.createSync(recursive: true);
+    return d;
+  }
+
+  /// Devuelve dónde quedó, por ejemplo "Descargas/DiskCompare/archivo.csv".
+  static Future<String> saveToDownloads(String file, String name) async {
+    try {
+      return await _storage.invokeMethod<String>('saveDownload', {'path': file, 'name': name}) ?? name;
+    } on PlatformException catch (e) {
+      throw e.message ?? e.code;
+    }
+  }
+
+  static Future<void> share(String file, String title) async {
+    try {
+      await _storage.invokeMethod('shareFile', {'path': file, 'title': title});
+    } on PlatformException catch (e) {
+      throw e.message ?? e.code;
+    }
+  }
+}
+
 /// Carpeta compartida de Windows: \\PC\Compartida\sub\carpeta
 class PcTarget {
   final String host;
@@ -148,7 +179,8 @@ class CompareConfig {
   String user;
   String phoneFolder;
   bool savePassword;
-  CompareConfig({this.unc = '', this.user = '', this.phoneFolder = '', this.savePassword = true});
+  bool byFolder; // comparar también por carpeta
+  CompareConfig({this.unc = '', this.user = '', this.phoneFolder = '', this.savePassword = true, this.byFolder = false});
 
   static Future<File> _file() async => File('${(await appDir()).path}/compare.json');
 
@@ -162,6 +194,7 @@ class CompareConfig {
         user: m['user'] as String? ?? '',
         phoneFolder: m['phoneFolder'] as String? ?? '',
         savePassword: m['savePassword'] as bool? ?? true,
+        byFolder: m['byFolder'] as bool? ?? false,
       );
     } catch (_) {
       return CompareConfig();
@@ -171,7 +204,7 @@ class CompareConfig {
   Future<void> save() async {
     final f = await _file();
     await f.writeAsString(jsonEncode(
-        {'unc': unc, 'user': user, 'phoneFolder': phoneFolder, 'savePassword': savePassword}));
+        {'unc': unc, 'user': user, 'phoneFolder': phoneFolder, 'savePassword': savePassword, 'byFolder': byFolder}));
   }
 }
 

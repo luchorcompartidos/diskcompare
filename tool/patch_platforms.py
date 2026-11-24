@@ -9,7 +9,7 @@ import shutil
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-KOTLIN = ["MainActivity.kt", "SmbBridge.kt", "Secret.kt"]  # tool/android/*.kt
+KOTLIN = ["MainActivity.kt", "SmbBridge.kt", "Secret.kt", "Export.kt"]  # tool/android/*.kt
 
 # smbj (SMB 2/3, para leer carpetas compartidas de Windows) + desugaring de Java 8
 # (smbj usa APIs de Java 8 que Android 5/6 no trae).
@@ -36,6 +36,8 @@ android {
 
 dependencies {
     implementation("com.hierynomus:smbj:0.13.0")
+    // FileProvider para compartir el CSV (1.13.1 todavía soporta Android 5 / minSdk 19)
+    implementation("androidx.core:core:1.13.1")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 }
 """
@@ -90,6 +92,23 @@ def android():
     s = open(m, encoding="utf-8").read()
     if "requestLegacyExternalStorage" not in s:
         patch(m, "<application", '<application android:requestLegacyExternalStorage="true"')
+    # FileProvider: compartir los CSV exportados (cache/export) con el menú de Android
+    s = open(m, encoding="utf-8").read()
+    if "androidx.core.content.FileProvider" not in s:
+        patch(m, "</application>",
+              '<provider\n'
+              '            android:name="androidx.core.content.FileProvider"\n'
+              '            android:authorities="${applicationId}.files"\n'
+              '            android:exported="false"\n'
+              '            android:grantUriPermissions="true">\n'
+              '            <meta-data\n'
+              '                android:name="android.support.FILE_PROVIDER_PATHS"\n'
+              '                android:resource="@xml/dc_file_paths" />\n'
+              '        </provider>\n'
+              '    </application>')
+    os.makedirs("android/app/src/main/res/xml", exist_ok=True)
+    shutil.copy(os.path.join(HERE, "android", "dc_file_paths.xml"), "android/app/src/main/res/xml/dc_file_paths.xml")
+    print("OK res/xml/dc_file_paths.xml")
     found = glob.glob("android/app/src/main/kotlin/**/MainActivity.kt", recursive=True)
     if not found:
         sys.exit("::error::No encontré MainActivity.kt")

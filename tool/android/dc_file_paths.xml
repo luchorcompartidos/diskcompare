@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copiado por tool/patch_platforms.py a android/app/src/main/res/xml/. Carpeta que se puede compartir (CSV exportados). -->
+<paths>
+    <cache-path name="export" path="export/" />
+</paths>

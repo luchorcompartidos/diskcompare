@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 
@@ -53,11 +54,13 @@ class CompareResult {
 
 int _sum(Iterable<int> l) => l.fold(0, (a, b) => a + b);
 
-CompareResult _compare(List<FEntry> phone, List<FEntry> pc) {
+/// [byFolder] = además del nombre y el tamaño, tiene que coincidir la carpeta (ruta relativa).
+CompareResult _compare(List<FEntry> phone, List<FEntry> pc, bool byFolder) {
   Map<String, List<FEntry>> byName(List<FEntry> l) {
     final m = <String, List<FEntry>>{};
     for (final e in l) {
-      (m[e.name.toLowerCase()] ??= <FEntry>[]).add(e); // Windows no distingue mayúsculas
+      // Windows no distingue mayúsculas
+      (m[(byFolder ? e.path : e.name).toLowerCase()] ??= <FEntry>[]).add(e);
     }
     return m;
   }
@@ -104,7 +107,8 @@ CompareResult _compare(List<FEntry> phone, List<FEntry> pc) {
 }
 
 /// Compara en segundo plano.
-Future<CompareResult> compareFiles(List<FEntry> phone, List<FEntry> pc) => Isolate.run(() => _compare(phone, pc));
+Future<CompareResult> compareFiles(List<FEntry> phone, List<FEntry> pc, {bool byFolder = false}) =>
+    Isolate.run(() => _compare(phone, pc, byFolder));
 
 /// Archivos de un árbol escaneado, con la ruta relativa a su raíz.
 List<FEntry> flattenNode(Node root) {
@@ -476,15 +480,17 @@ class _ComparePageState extends State<ComparePage> {
       if (!mounted) return;
       setState(() => _phase = 'compare');
       final (pcFiles, denied) = await readPcScan(scan.file);
-      final res = await compareFiles(phone, pcFiles);
+      final res = await compareFiles(phone, pcFiles, byFolder: _cfg.byFolder);
       if (!mounted) return;
       setState(() => _phase = null);
       Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => CompareResultPage(
           result: res,
+          byFolder: _cfg.byFolder,
           phoneLabel: _showLocal(_phone),
           pcLabel: t.unc,
           phoneRoot: root,
+          phoneFiles: phone,
           pcFiles: pcFiles,
           denied: denied,
         ),
@@ -627,6 +633,28 @@ class _ComparePageState extends State<ComparePage> {
                       child: Text(_error!, style: TextStyle(color: scheme.onErrorContainer)),
                     ),
                   ),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Padding(
+                        padding: const EdgeInsets.only(top: 12),
+                        child: Text('3. Cómo comparar', style: Theme.of(context).textTheme.titleMedium),
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: _cfg.byFolder,
+                        onChanged: busy ? null : (v) => setState(() => _cfg.byFolder = v),
+                        title: const Text('Comparar también por carpeta'),
+                        subtitle: Text(
+                          _cfg.byFolder
+                              ? 'Iguales = mismo nombre, tamaño y subcarpeta. Sirve para revisar una copia que tiene que ser idéntica.'
+                              : 'Iguales = mismo nombre y tamaño, en cualquier subcarpeta (encuentra copias movidas).',
+                        ),
+                      ),
+                    ]),
+                  ),
+                ),
                 const SizedBox(height: 8),
                 if (busy) ...[
                   const LinearProgressIndicator(),
@@ -652,7 +680,7 @@ class _ComparePageState extends State<ComparePage> {
                   ),
                 const SizedBox(height: 12),
                 Text(
-                  'Se compara por nombre y tamaño, sin importar en qué subcarpeta esté cada archivo. '
+                  'Se puede cambiar el modo también en el resultado, sin volver a leer. '
                   'La app solo lee: no copia, mueve ni borra nada en el celular ni en la PC.',
                   style: small,
                 ),
@@ -663,22 +691,101 @@ class _ComparePageState extends State<ComparePage> {
 }
 
 // ---------------------------------------------------------------------------
-// Resultado
+// Resultado: buscador, filtro por tipo y exportar a CSV
 // ---------------------------------------------------------------------------
+
+const _tabNames = ['Solo celular', 'Solo PC', 'En ambos', 'Diferencias'];
+
+/// Lo que se ve en cada pestaña después del buscador y el filtro.
+class _View {
+  final List<FEntry> onlyPhone;
+  final List<FEntry> onlyPc;
+  final List<BothRow> both;
+  final List<DiffRow> diff;
+  const _View(this.onlyPhone, this.onlyPc, this.both, this.diff);
+
+  int count(int tab) => switch (tab) {
+        0 => onlyPhone.length,
+        1 => onlyPc.length,
+        2 => both.length,
+        _ => diff.length,
+      };
+}
+
+String _csvField(String v) =>
+    v.contains(';') || v.contains('"') || v.contains('\n') || v.contains('\r') ? '"${v.replaceAll('"', '""')}"' : v;
+
+/// Arma el CSV (separador ";" y fechas dd/mm/aaaa, como lo abre Excel o Sheets en español).
+String _buildCsv(_View v, List<int> tabs, String phoneLabel, String pcLabel) {
+  final b = StringBuffer();
+  void row(List<String> f) {
+    b.write(f.map(_csvField).join(';'));
+    b.write('\r\n');
+  }
+
+  String ph(FEntry e) => '$phoneLabel/${e.path}';
+  String pc(FEntry e) => '$pcLabel\\${e.path.replaceAll('/', '\\')}';
+  List<String> side(FEntry? e, bool phone) =>
+      e == null ? ['', '', ''] : [phone ? ph(e) : pc(e), '${e.size}', fmtDate(e.mtime)];
+
+  row([
+    'Resultado', 'Nombre', 'Tipo',
+    'Ruta en el celular', 'Tamaño celular (bytes)', 'Fecha celular',
+    'Ruta en la PC', 'Tamaño PC (bytes)', 'Fecha PC', 'Copias iguales en la PC',
+  ]);
+  for (final t in tabs) {
+    final name = _tabNames[t];
+    switch (t) {
+      case 0:
+        for (final e in v.onlyPhone) {
+          row([name, e.name, kindOf(e.name).label, ...side(e, true), ...side(null, false), '']);
+        }
+      case 1:
+        for (final e in v.onlyPc) {
+          row([name, e.name, kindOf(e.name).label, ...side(null, true), ...side(e, false), '']);
+        }
+      case 2:
+        for (final r in v.both) {
+          row([name, r.phone.name, kindOf(r.phone.name).label, ...side(r.phone, true), ...side(r.pc, false), '${r.pcCopies}']);
+        }
+      default:
+        for (final d in v.diff) {
+          final n = d.phone.length > d.pc.length ? d.phone.length : d.pc.length;
+          for (var i = 0; i < n; i++) {
+            row([
+              name, d.name, kindOf(d.name).label,
+              ...side(i < d.phone.length ? d.phone[i] : null, true),
+              ...side(i < d.pc.length ? d.pc[i] : null, false),
+              '',
+            ]);
+          }
+        }
+    }
+  }
+  return b.toString();
+}
+
+/// Función de nivel superior: así el isolate no arrastra el estado de la pantalla.
+Future<String> _csvInBackground(_View v, List<int> tabs, String phoneLabel, String pcLabel) =>
+    Isolate.run(() => _buildCsv(v, tabs, phoneLabel, pcLabel));
 
 class CompareResultPage extends StatefulWidget {
   final CompareResult result;
+  final bool byFolder;
   final String phoneLabel;
   final String pcLabel;
   final Node phoneRoot;
+  final List<FEntry> phoneFiles;
   final List<FEntry> pcFiles;
   final List<String> denied;
   const CompareResultPage({
     super.key,
     required this.result,
+    required this.byFolder,
     required this.phoneLabel,
     required this.pcLabel,
     required this.phoneRoot,
+    required this.phoneFiles,
     required this.pcFiles,
     required this.denied,
   });
@@ -689,13 +796,173 @@ class CompareResultPage extends StatefulWidget {
 
 class _CompareResultPageState extends State<CompareResultPage> with SingleTickerProviderStateMixin {
   late final TabController _tabs = TabController(length: 4, vsync: this);
+  late CompareResult _res = widget.result;
+  late bool _byFolder = widget.byFolder;
+  bool _working = false; // recomparando o exportando
+  final _search = TextEditingController();
+  Timer? _debounce;
+  String _q = '';
+  Kind? _kind;
+  late _View _v = _filter();
   Node? _pcTree;
 
   @override
   void dispose() {
+    _debounce?.cancel();
+    _search.dispose();
     _tabs.dispose();
     super.dispose();
   }
+
+  bool get _filtering => _q.isNotEmpty || _kind != null;
+
+  // --- Buscador y filtro ---------------------------------------------------
+
+  bool _kindOk(String name) => _kind == null || kindOf(name) == _kind;
+  bool _has(FEntry e) => e.path.toLowerCase().contains(_q);
+
+  _View _filter() {
+    final r = _res;
+    if (!_filtering) return _View(r.onlyPhone, r.onlyPc, r.both, r.diff);
+    bool entry(FEntry e) => _kindOk(e.name) && (_q.isEmpty || _has(e));
+    return _View(
+      r.onlyPhone.where(entry).toList(),
+      r.onlyPc.where(entry).toList(),
+      r.both.where((b) => _kindOk(b.phone.name) && (_q.isEmpty || _has(b.phone) || _has(b.pc))).toList(),
+      r.diff
+          .where((d) =>
+              _kindOk(d.name) &&
+              (_q.isEmpty || d.name.toLowerCase().contains(_q) || d.phone.any(_has) || d.pc.any(_has)))
+          .toList(),
+    );
+  }
+
+  void _onSearch(String text) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      final q = text.trim().toLowerCase();
+      if (q == _q || !mounted) return;
+      setState(() {
+        _q = q;
+        _v = _filter();
+      });
+    });
+  }
+
+  void _setKind(Kind? k) => setState(() {
+        _kind = k;
+        _v = _filter();
+      });
+
+  // --- Modo de comparación -------------------------------------------------
+
+  Future<void> _setMode(bool byFolder) async {
+    if (byFolder == _byFolder || _working) return;
+    setState(() => _working = true);
+    try {
+      final r = await compareFiles(widget.phoneFiles, widget.pcFiles, byFolder: byFolder);
+      if (!mounted) return;
+      setState(() {
+        _res = r;
+        _byFolder = byFolder;
+        _v = _filter();
+      });
+      try {
+        final cfg = await CompareConfig.load();
+        cfg.byFolder = byFolder;
+        await cfg.save();
+      } catch (_) {}
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  // --- Exportar ------------------------------------------------------------
+
+  void _snack(String text) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  Future<void> _export() async {
+    final tab = _tabs.index;
+    var all = false;
+    final share = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, set) => AlertDialog(
+          title: const Text('Exportar a CSV'),
+          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            RadioListTile<bool>(
+              contentPadding: EdgeInsets.zero,
+              value: false,
+              groupValue: all,
+              onChanged: (v) => set(() => all = v ?? false),
+              title: Text('Solo "${_tabNames[tab]}" (${fmtInt(_v.count(tab))})'),
+            ),
+            RadioListTile<bool>(
+              contentPadding: EdgeInsets.zero,
+              value: true,
+              groupValue: all,
+              onChanged: (v) => set(() => all = v ?? true),
+              title: const Text('Las 4 pestañas'),
+            ),
+            Text(
+              _filtering
+                  ? 'Se exporta lo que se ve, con el buscador y el filtro aplicados.'
+                  : 'Se abre con Excel o Google Sheets (separador ";").',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar')),
+            TextButton.icon(
+              onPressed: () => Navigator.of(context).pop(true),
+              icon: const Icon(Icons.share_outlined),
+              label: const Text('Compartir'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(context).pop(false),
+              icon: const Icon(Icons.download),
+              label: const Text('Guardar en Descargas'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (share == null || !mounted) return;
+
+    setState(() => _working = true);
+    try {
+      final csv = await _csvInBackground(_v, all ? const [0, 1, 2, 3] : [tab], widget.phoneLabel, widget.pcLabel);
+      final now = DateTime.now();
+      String two(int n) => n.toString().padLeft(2, '0');
+      final suffix = all ? '' : '-${_tabNames[tab].toLowerCase().replaceAll(' ', '-')}';
+      final name = 'diskcompare-${now.year}${two(now.month)}${two(now.day)}-${two(now.hour)}${two(now.minute)}$suffix.csv';
+      final dir = await Exporter.dir();
+      try {
+        // Borra exportaciones viejas de la caché (las de más de una hora).
+        for (final f in dir.listSync().whereType<File>()) {
+          if (now.difference(f.lastModifiedSync()).inHours >= 1) f.deleteSync();
+        }
+      } catch (_) {}
+      final file = File('${dir.path}/$name');
+      await file.writeAsString('﻿$csv', flush: true); // BOM: Excel reconoce los acentos
+      if (share) {
+        await Exporter.share(file.path, name);
+      } else {
+        final where = await Exporter.saveToDownloads(file.path, name);
+        if (mounted) _snack('Guardado en $where');
+      }
+    } catch (e) {
+      if (mounted) _snack('No se pudo exportar: $e');
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  // --- Pantalla ------------------------------------------------------------
 
   String _pcPath(FEntry e) => '${widget.pcLabel}\\${e.path.replaceAll('/', '\\')}';
   String _phonePath(FEntry e) => '${widget.phoneLabel}/${e.path}';
@@ -713,20 +980,45 @@ class _CompareResultPageState extends State<CompareResultPage> with SingleTicker
     ));
   }
 
+  void _menu(String v) {
+    switch (v) {
+      case 'name':
+        _setMode(false);
+      case 'folder':
+        _setMode(true);
+      case 'csv':
+        _export();
+      case 'tree-phone':
+        _openTree(false);
+      case 'tree-pc':
+        _openTree(true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final r = widget.result;
+    final v = _v;
+    final f = _byFolder;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Comparación'),
         actions: [
-          PopupMenuButton<bool>(
-            tooltip: 'Ver como árbol',
-            icon: const Icon(Icons.account_tree_outlined),
-            onSelected: _openTree,
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: false, child: Text('Ver el celular (Árbol, Mapa…)')),
-              PopupMenuItem(value: true, child: Text('Ver la PC (Árbol, Mapa…)')),
+          IconButton(
+            tooltip: 'Exportar a CSV',
+            icon: const Icon(Icons.file_download_outlined),
+            onPressed: _working ? null : _export,
+          ),
+          PopupMenuButton<String>(
+            onSelected: _menu,
+            enabled: !_working,
+            itemBuilder: (_) => [
+              CheckedPopupMenuItem(value: 'name', checked: !f, child: const Text('Comparar por nombre y tamaño')),
+              CheckedPopupMenuItem(value: 'folder', checked: f, child: const Text('Comparar también por carpeta')),
+              const PopupMenuDivider(),
+              const PopupMenuItem(value: 'csv', child: Text('Exportar a CSV…')),
+              const PopupMenuDivider(),
+              const PopupMenuItem(value: 'tree-phone', child: Text('Ver el celular (Árbol, Mapa…)')),
+              const PopupMenuItem(value: 'tree-pc', child: Text('Ver la PC (Árbol, Mapa…)')),
             ],
           ),
         ],
@@ -734,63 +1026,129 @@ class _CompareResultPageState extends State<CompareResultPage> with SingleTicker
           controller: _tabs,
           isScrollable: true,
           tabAlignment: TabAlignment.start,
-          tabs: [
-            Tab(text: 'Solo celular (${fmtInt(r.onlyPhone.length)})'),
-            Tab(text: 'Solo PC (${fmtInt(r.onlyPc.length)})'),
-            Tab(text: 'En ambos (${fmtInt(r.both.length)})'),
-            Tab(text: 'Diferencias (${fmtInt(r.diff.length)})'),
-          ],
+          tabs: [for (var t = 0; t < 4; t++) Tab(text: '${_tabNames[t]} (${fmtInt(v.count(t))})')],
         ),
       ),
       body: SafeArea(
         top: false,
-        child: TabBarView(controller: _tabs, children: [
-          _list(
-            'Están en el celular y en la PC no hay ningún archivo con ese nombre.',
-            _sum(r.onlyPhone.map((e) => e.size)),
-            r.onlyPhone.length,
-            (i) => _entryTile(r.onlyPhone[i], phone: true),
+        child: Column(children: [
+          if (_working) const LinearProgressIndicator(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: TextField(
+              controller: _search,
+              onChanged: _onSearch,
+              autocorrect: false,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: 'Buscar por nombre o carpeta',
+                prefixIcon: const Icon(Icons.search),
+                border: const OutlineInputBorder(),
+                suffixIcon: _search.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'Borrar',
+                        icon: const Icon(Icons.close),
+                        onPressed: () {
+                          _search.clear();
+                          _onSearch('');
+                        },
+                      ),
+              ),
+            ),
           ),
-          _list(
-            'Están en la PC y en el celular no hay ningún archivo con ese nombre.'
-            '${widget.denied.isEmpty ? '' : '\n${fmtInt(widget.denied.length)} carpetas de la PC no se pudieron leer (sin permiso).'}',
-            _sum(r.onlyPc.map((e) => e.size)),
-            r.onlyPc.length,
-            (i) => _entryTile(r.onlyPc[i], phone: false),
+          SizedBox(
+            height: 48,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              children: [
+                ChoiceChip(label: const Text('Todos'), selected: _kind == null, onSelected: (_) => _setKind(null)),
+                for (final k in Kind.values) ...[
+                  const SizedBox(width: 6),
+                  ChoiceChip(
+                    avatar: Icon(k.icon, size: 18, color: k.color),
+                    label: Text(k.label),
+                    selected: _kind == k,
+                    onSelected: (s) => _setKind(s ? k : null),
+                  ),
+                ],
+              ],
+            ),
           ),
-          _list(
-            'Mismo nombre y mismo tamaño en los dos lados (aunque estén en carpetas distintas).',
-            _sum(r.both.map((e) => e.phone.size)),
-            r.both.length,
-            (i) => _bothTile(r.both[i]),
-          ),
-          _list(
-            'Mismo nombre pero distinto tamaño: puede ser otra versión o una copia incompleta.',
-            _sum(r.diff.map((e) => e.size)),
-            r.diff.length,
-            (i) => _diffTile(r.diff[i]),
+          Expanded(
+            child: TabBarView(controller: _tabs, children: [
+              _list(
+                f
+                    ? 'Están en el celular y en la PC no hay un archivo con ese nombre en la misma carpeta.'
+                    : 'Están en el celular y en la PC no hay ningún archivo con ese nombre.',
+                _sum(v.onlyPhone.map((e) => e.size)),
+                v.onlyPhone.length,
+                _res.onlyPhone.length,
+                (i) => _entryTile(v.onlyPhone[i], phone: true),
+              ),
+              _list(
+                '${f ? 'Están en la PC y en el celular no hay un archivo con ese nombre en la misma carpeta.' : 'Están en la PC y en el celular no hay ningún archivo con ese nombre.'}'
+                '${widget.denied.isEmpty ? '' : '\n${fmtInt(widget.denied.length)} carpetas de la PC no se pudieron leer (sin permiso).'}',
+                _sum(v.onlyPc.map((e) => e.size)),
+                v.onlyPc.length,
+                _res.onlyPc.length,
+                (i) => _entryTile(v.onlyPc[i], phone: false),
+              ),
+              _list(
+                f
+                    ? 'Mismo nombre, tamaño y carpeta en los dos lados.'
+                    : 'Mismo nombre y mismo tamaño en los dos lados (aunque estén en carpetas distintas).',
+                _sum(v.both.map((e) => e.phone.size)),
+                v.both.length,
+                _res.both.length,
+                (i) => _bothTile(v.both[i]),
+              ),
+              _list(
+                f
+                    ? 'Mismo nombre y carpeta pero distinto tamaño: puede ser otra versión o una copia incompleta.'
+                    : 'Mismo nombre pero distinto tamaño: puede ser otra versión o una copia incompleta.',
+                _sum(v.diff.map((e) => e.size)),
+                v.diff.length,
+                _res.diff.length,
+                (i) => _diffTile(v.diff[i]),
+              ),
+            ]),
           ),
         ]),
       ),
     );
   }
 
-  Widget _list(String help, int bytes, int count, Widget Function(int i) row) {
-    final r = widget.result;
+  Widget _list(String help, int bytes, int count, int total, Widget Function(int i) row) {
+    final r = _res;
+    final small = Theme.of(context).textTheme.bodySmall;
+    final empty = count == 0 && _filtering && total > 0;
     return ListView.builder(
-      itemCount: count + 1,
+      itemCount: count + 1 + (empty ? 1 : 0),
       itemBuilder: (context, i) {
         if (i == 0) {
           return Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('${fmtInt(count)} archivos · ${fmtSize(bytes)}', style: Theme.of(context).textTheme.titleMedium),
-              Text(help, style: Theme.of(context).textTheme.bodySmall),
+              Text(
+                '${fmtInt(count)} archivos · ${fmtSize(bytes)}${_filtering ? ' (de ${fmtInt(total)})' : ''}',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              Text(help, style: small),
               Text(
                 'Celular: ${widget.phoneLabel} (${fmtInt(r.phoneFiles)}) · PC: ${widget.pcLabel} (${fmtInt(r.pcFiles)})',
-                style: Theme.of(context).textTheme.bodySmall,
+                style: small,
               ),
+              Text(_byFolder ? 'Modo: nombre + tamaño + carpeta' : 'Modo: nombre + tamaño', style: small),
             ]),
+          );
+        }
+        if (empty) {
+          return const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: Text('Nada coincide con la búsqueda o el filtro.')),
           );
         }
         return row(i - 1);
@@ -816,8 +1174,10 @@ class _CompareResultPageState extends State<CompareResultPage> with SingleTicker
         leading: _icon(b.phone.name),
         title: Text(b.phone.name, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: Text(
-          '${fmtSize(b.phone.size)} · Celular: ${_folder(b.phone)} · PC: ${_folder(b.pc)}'
-          '${b.pcCopies > 1 ? ' (${b.pcCopies} copias)' : ''}',
+          _byFolder
+              ? '${fmtSize(b.phone.size)} · ${_folder(b.phone)}'
+              : '${fmtSize(b.phone.size)} · Celular: ${_folder(b.phone)} · PC: ${_folder(b.pc)}'
+                  '${b.pcCopies > 1 ? ' (${b.pcCopies} copias)' : ''}',
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
         ),
@@ -826,11 +1186,16 @@ class _CompareResultPageState extends State<CompareResultPage> with SingleTicker
 
   Widget _diffTile(DiffRow d) {
     String sizes(List<FEntry> l) => l.isEmpty ? '—' : l.map((e) => fmtSize(e.size)).join(', ');
+    final any = d.phone.isNotEmpty ? d.phone.first : (d.pc.isNotEmpty ? d.pc.first : null);
     return ListTile(
       dense: true,
       leading: _icon(d.name),
       title: Text(d.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text('Celular: ${sizes(d.phone)} · PC: ${sizes(d.pc)}', maxLines: 2, overflow: TextOverflow.ellipsis),
+      subtitle: Text(
+        '${_byFolder && any != null ? '${_folder(any)} · ' : ''}Celular: ${sizes(d.phone)} · PC: ${sizes(d.pc)}',
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
       onTap: () => _details(d.name, d.phone, d.pc),
     );
   }
