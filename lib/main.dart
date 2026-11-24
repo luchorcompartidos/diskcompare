@@ -9,6 +9,7 @@ import 'format.dart';
 import 'results.dart';
 import 'scanner.dart';
 import 'store.dart';
+import 'updates.dart';
 
 const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: 'dev');
 const appAbi = String.fromEnvironment('APP_ABI', defaultValue: '');
@@ -73,12 +74,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final Map<String, Node> _last = {}; // último escaneo de cada volumen (queda guardado)
   final Map<String, int> _lastAt = {}; // cuándo se hizo
   bool _savedLoaded = false;
+  List<ReleaseInfo> _releases = [];
+
+  ReleaseInfo? get _newer {
+    if (_releases.isEmpty || appVersion == 'dev') return null;
+    final latest = _releases.first;
+    return Updates.compare(latest.version, appVersion) > 0 ? latest : null;
+  }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _refresh();
+    Updates.fetch().then((r) {
+      if (mounted) setState(() => _releases = r);
+    });
   }
 
   @override
@@ -201,17 +212,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           IconButton(
             tooltip: 'Acerca de',
             icon: const Icon(Icons.info_outline),
-            onPressed: () => showAboutDialog(
-              context: context,
-              applicationName: 'DiskCompare',
-              applicationVersion: appVersionText,
-              children: const [
-                Text('Analizá qué ocupa lugar en tu celular: árbol de carpetas por tamaño, '
-                    'mapa de bloques, archivos más grandes y totales por tipo.\n\n'
-                    'Comparar con la PC: celular contra una carpeta compartida de Windows por WiFi '
-                    '(solo en el celular / solo en la PC / en ambos / diferencias). Solo lee: no borra nada.'),
-              ],
-            ),
+            onPressed: _showVersion,
           ),
         ],
       ),
@@ -220,6 +221,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         child: ListView(
           padding: EdgeInsets.fromLTRB(12, 12, 12, 12 + MediaQuery.paddingOf(context).bottom),
           children: [
+            if (_newer != null) _updateCard(_newer!),
             if (_granted == false) _permissionCard(),
             for (final v in _vols) _volumeCard(v),
             Card(
@@ -237,13 +239,74 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 )),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Text(appVersionText,
-                  textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodySmall),
+            Center(
+              child: TextButton(
+                onPressed: _showVersion,
+                child: Text('$appVersionText · Changelog', style: Theme.of(context).textTheme.bodySmall),
+              ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _openUpdate(ReleaseInfo r) => openUrl(r.apkFor(appAbi) ?? r.htmlUrl);
+
+  Widget _updateCard(ReleaseInfo r) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      color: scheme.primaryContainer,
+      child: ListTile(
+        leading: const Icon(Icons.system_update),
+        title: Text('Hay una versión nueva (v${r.version})'),
+        subtitle: Text(r.apkFor(appAbi) != null ? 'Se descarga el APK $appAbi' : 'Abre la Release en GitHub'),
+        trailing: FilledButton(onPressed: () => _openUpdate(r), child: const Text('Descargar')),
+        onTap: _showVersion,
+      ),
+    );
+  }
+
+  void _showVersion() {
+    final matches = _releases.where((r) => r.version == appVersion);
+    final ReleaseInfo? current = matches.isEmpty ? null : matches.first;
+    final newer = _newer;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('DiskCompare $appVersionText'),
+        content: SizedBox(
+          width: 420,
+          child: ListView(shrinkWrap: true, children: [
+            if (current != null && current.date != null)
+              Text('Publicada: ${fmtDate(current.date!.millisecondsSinceEpoch)}'),
+            if (newer != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text('Hay una versión nueva: v${newer.version}',
+                    style: TextStyle(color: Theme.of(ctx).colorScheme.primary, fontWeight: FontWeight.bold)),
+              ),
+            const SizedBox(height: 12),
+            const Text('Analizá qué ocupa lugar en tu celular (árbol, mapa, archivos grandes y tipos) '
+                'y compará una carpeta con una carpeta compartida de tu PC por WiFi. '
+                'Solo lee: no modifica ni borra nada.'),
+            const SizedBox(height: 16),
+            Text('Changelog', style: Theme.of(ctx).textTheme.titleMedium),
+            if (_releases.isEmpty) const Text('Sin conexión y sin copia guardada.'),
+            for (final r in _releases.take(15)) ...[
+              const SizedBox(height: 10),
+              Text('v${r.version}${r.date == null ? '' : ' · ${fmtDate(r.date!.millisecondsSinceEpoch)}'}',
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              if (r.notes.isNotEmpty) Text(r.notes),
+            ],
+          ]),
+        ),
+        actions: [
+          if (newer != null)
+            FilledButton(onPressed: () => _openUpdate(newer), child: const Text('Descargar')),
+          TextButton(onPressed: () => openUrl('$repoUrl/releases'), child: const Text('Ver en GitHub')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cerrar')),
+        ],
       ),
     );
   }

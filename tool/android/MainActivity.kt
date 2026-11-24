@@ -1,5 +1,7 @@
 package com.luchorcompartidos.diskcompare
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.StatFs
@@ -21,6 +23,13 @@ class MainActivity : FlutterActivity() {
                 "sdk" -> result.success(Build.VERSION.SDK_INT)
                 "volumes" -> result.success(volumes())
                 "filesDir" -> result.success(filesDir.absolutePath)
+                "openUrl" -> try {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(call.argument<String>("url") ?: ""))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    result.success(true)
+                } catch (e: Exception) {
+                    result.error("url", e.message ?: e.toString(), null)
+                }
                 "secretSave" -> try {
                     Secret.save(this, call.argument<String>("key") ?: "", call.argument<String>("value") ?: "")
                     result.success(true)
