@@ -3,6 +3,7 @@
 > Archivo para retomar el trabajo en un chat nuevo.
 > Uso: *"Seguimos con DiskCompare, etapa 2. Leé `DESARROLLO.md` del repo luchorcompartidos/diskcompare."*
 > Mantenerlo corto (idealmente menos de 1 página). Lo viejo va resumido en "Historial".
+> Dispositivos viejos (**Sí**): al cerrar cada etapa, revisar si lo hecho deja algo nuevo para `plantilla/APK-DISPOSITIVOS-VIEJOS.md` del repo home y, si corresponde, actualizarla (secciones 3–5 + Historial) y subirla. No hace falta que el usuario lo pida.
 
 ---
 
@@ -15,7 +16,7 @@
 | Tipo | Android APK (Flutter): 2 APK por Release — `arm64-v8a` (Android 7+) y `android5-6-armeabi-v7a` (Android 5/6) |
 | Estado | Prototipo |
 | Última versión (Release) | v0.0.6 — 2026-11-24 |
-| Dispositivos viejos (Android 5/6) | **Sí** — aplicar `plantilla/APK-DISPOSITIVOS-VIEJOS.md` (repo home) en cada cambio |
+| Dispositivos viejos (Android 5/6) | **Sí** — aplicar `plantilla/APK-DISPOSITIVOS-VIEJOS.md` (repo home) en cada cambio y, al cerrar cada etapa, revisar si lo hecho deja algo nuevo para esa guía (un problema, un arreglo, una versión de biblioteca, una prueba en las tablets) y, si corresponde, actualizarla (sección del tema + Historial) y subirla al repo home |
 | Se conecta con | carpeta compartida de Windows por SMB 2/3 (smbj), solo lectura |
 
 ## 2. Etapa actual
@@ -80,4 +81,4 @@
 - v0.0.1 2026-11-24 — Etapa 1: escaneo, Árbol, Mapa, Grandes y Tipos.
 
 ---
-*Al cerrar cada sesión: actualizar secciones 1, 2, 3 y 7, y subir el archivo al repo.*
+*Al cerrar cada sesión: actualizar secciones 1, 2, 3 y 7, y subir el archivo al repo. Revisar también `plantilla/APK-DISPOSITIVOS-VIEJOS.md` (repo home) y actualizarla si corresponde.*
